@@ -1,0 +1,6 @@
+[submodule "camunda-loan-poc"]
+	path = camunda-loan-poc
+	url = https://github.com/Gammanik/camunda-poc.git
+[submodule "temporal-loan-poc"]
+	path = temporal-loan-poc
+	url = https://github.com/Gammanik/temporal-poc.git
