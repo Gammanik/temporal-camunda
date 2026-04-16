@@ -1,43 +1,32 @@
-# Loan Origination Workflow Comparison: Camunda vs Temporal
+# Loan Origination Workflow: Camunda vs Temporal Comparison
 
-This repository contains two parallel implementations of the same loan origination workflow, demonstrating the differences between **Camunda 8 (Zeebe)** and **Temporal** for orchestrating business processes.
+This repository demonstrates the **same loan origination workflow** implemented in both **Camunda 8 (Zeebe)** and **Temporal**, showcasing the key differences between BPMN-based and code-first workflow orchestration.
 
-## Table of Contents
-- [Overview](#overview)
-- [Loan Flow Logic](#loan-flow-logic)
-- [Architecture Comparison](#architecture-comparison)
-- [Technology Stack](#technology-stack)
-- [Implementation Details](#implementation-details)
-- [Pros and Cons](#pros-and-cons)
-- [When to Use Which](#when-to-use-which)
-- [Key Differences](#key-differences)
-- [Running the Projects](#running-the-projects)
+## 📸 UI Screenshots
+
+**See the UIs in action**: [UI-SCREENSHOTS.md](UI-SCREENSHOTS.md) - Visual comparison of Camunda Operate vs Temporal Web UI
 
 ---
 
 ## Overview
 
-Both POCs implement the same loan origination workflow with the following business logic:
-1. **Credit Check**: Evaluate applicant's creditworthiness
-2. **Decision Gateway**: Route based on credit score
-   - **Approved** (score ≥ 750): Generate contract and complete
-   - **Rejected** (score < 600 or outside manual review range): Immediately reject
-   - **Manual Review** (600 ≤ score < 680): Requires human intervention
-3. **Manual Review Process**:
-   - Wait for underwriter decision with 7-day timeout
-   - If approved by underwriter, loop back to credit check
-   - If timeout expires, auto-reject the application
-4. **Contract Generation**: For approved loans, generate loan contract
+Both implementations handle the same business logic:
+
+1. **Credit Check** → Evaluate applicant's creditworthiness
+2. **Decision Gateway**:
+   - **Score ≥ 750**: Auto-approve → Generate contract
+   - **Score 600-679**: Manual review → Wait up to 7 days for underwriter decision
+   - **Score < 600**: Auto-reject
+3. **Contract Generation** → For approved loans
 
 ### Projects
-- **[camunda-loan-poc](./camunda-loan-poc/)**: Full Spring Boot application with REST API, PostgreSQL persistence, and Camunda 8 orchestration
-- **[temporal-loan-poc](./temporal-loan-poc/)**: Temporal workflow implementation with activity-based architecture
+
+- **[camunda-loan-poc/](./camunda-loan-poc/)** - BPMN-based workflow with Spring Boot, PostgreSQL, and Camunda 8
+- **[temporal-loan-poc/](./temporal-loan-poc/)** - Code-first workflow with Temporal's activity-based architecture
 
 ---
 
-## Loan Flow Logic
-
-### Visual Flow
+## Workflow Visualization
 
 ```
 ┌─────────────┐
@@ -64,14 +53,11 @@ Both POCs implement the same loan origination workflow with the following busine
 └──────┘ └───┬───┘ └────────┬─────────┘
            │              │
            │          ┌───┴────┐
-           │          │        │
            │     Approved   Timeout
            │          │        │
-           │          └────────┤
-           │                   │
-           ▼                   ▼
-    ┌─────────────┐      ┌────────┐
-    │  Generate   │      │ Auto   │
+           ▼          └────────┤
+    ┌─────────────┐            ▼
+    │  Generate   │      ┌────────┐
     │  Contract   │      │ Reject │
     └──────┬──────┘      └────────┘
            │
@@ -81,187 +67,144 @@ Both POCs implement the same loan origination workflow with the following busine
        └────────┘
 ```
 
-### Decision Logic
+---
 
-| Credit Score Range | Decision | Next Step |
-|--------------------|----------|-----------|
-| ≥ 750 | APPROVED | Generate Contract → Complete |
-| 600-679 | MANUAL_REVIEW | Wait for underwriter (7 days) → Re-check |
-| < 600 | REJECTED | End process |
+## Quick Comparison
+
+| Aspect | Camunda 8 | Temporal |
+|--------|-----------|----------|
+| **Process Definition** | BPMN 2.0 XML | Kotlin/Java code |
+| **Tooling** | Visual modeler | IDE (IntelliJ, VSCode) |
+| **Business Accessibility** | ⭐⭐⭐⭐⭐ Non-technical can understand | ⭐⭐ Requires programming knowledge |
+| **Developer Experience** | ⭐⭐⭐ XML + Code | ⭐⭐⭐⭐⭐ Pure code with type safety |
+| **UI Monitoring** | Rich (Operate, Tasklist, Optimize) | Technical (Event history) |
+| **Manual Tasks** | Built-in user tasks with forms | Signals + custom UI |
+| **Versioning** | BPMN version deployment | `Workflow.getVersion()` in code |
+| **Debugging** | Operate UI + logs | IDE debugger + deterministic replay |
+| **Learning Curve** | BPMN standard | Temporal concepts (determinism, replay) |
+| **Infrastructure** | Zeebe + Elasticsearch + Operate | Temporal server (lighter) |
 
 ---
 
 ## Architecture Comparison
 
-### Camunda 8 Architecture
+### Camunda 8: BPMN-Driven Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    REST API Layer                        │
-│  Spring Boot Controllers + DTOs                          │
-└─────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────┐
-│                   Domain Services                        │
-│  • LoanService (orchestration)                           │
-│  • RolloutService (version selection)                    │
-│  • StateTransitionService (audit)                        │
-└─────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────┐
-│              Zeebe Workflow Engine (BPMN)                │
-│  • Visual workflow definition (XML)                      │
-│  • Process instance state management                     │
-│  • Job distribution to workers                           │
-└─────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────┐
-│                    Zeebe Job Workers                     │
-│  • CreditCheckWorker (@JobWorker annotation)             │
-│  • ContractGenerationWorker                              │
-│  • DocVerificationWorker (v2)                            │
-└─────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────┐
-│                    PostgreSQL Database                   │
-│  • loan_applications (business data)                     │
-│  • state_transitions (audit trail)                       │
-└─────────────────────────────────────────────────────────┘
+REST API (Spring Boot)
+    ↓
+Domain Services
+    ↓
+Zeebe Engine (BPMN XML Process Definition)
+    ↓
+Job Workers (@JobWorker annotated classes)
+    ↓
+PostgreSQL (Business Data)
 ```
 
-### Temporal Architecture
+**Key characteristics**:
+- Process logic separated from business logic
+- Visual BPMN diagrams as source of truth
+- Zeebe distributes jobs to workers
+- Operate UI for monitoring and incident management
+
+### Temporal: Code-First Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                  Workflow Definition                     │
-│  LoanApplicationWorkflowImpl (Kotlin/Java code)          │
-│  • Pure code-based workflow logic                        │
-│  • Deterministic execution                               │
-└─────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────┐
-│                   Activity Interface                     │
-│  Activity stubs with retry/timeout policies              │
-│  • CreditCheckActivity                                   │
-│  • DecisionActivity                                      │
-│  • ContractGenerationActivity                            │
-└─────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────┐
-│                  Activity Implementations                │
-│  Business logic executed by workers                      │
-│  • Stateless, idempotent operations                      │
-│  • Can be scaled independently                           │
-└─────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────┐
-│                   Temporal Server                        │
-│  • Event history storage                                 │
-│  • Workflow state reconstruction                         │
-│  • Signal/query handling                                 │
-└─────────────────────────────────────────────────────────┘
+Workflow Definition (Kotlin/Java code)
+    ↓
+Activity Stubs (with retry policies)
+    ↓
+Activity Implementations (business logic)
+    ↓
+Temporal Server (event history + state)
 ```
+
+**Key characteristics**:
+- Workflow IS code - no separate definition files
+- Type-safe, compile-time checked
+- Event sourcing with deterministic replay
+- Temporal UI for event history inspection
 
 ---
 
+## Implementation Examples
 
+### Camunda: BPMN + Worker
 
-## Implementation Details
-
-### Camunda 8 Implementation
-
-#### BPMN Process Definition
+**BPMN Process Definition** (`loan-process.bpmn`):
 ```xml
-<bpmn:process id="loan-process-v1" name="Loan Process V1">
-  <bpmn:serviceTask id="credit_check" name="Credit Check">
-    <zeebe:taskDefinition type="credit-check" retries="3"/>
-  </bpmn:serviceTask>
+<bpmn:serviceTask id="credit_check" name="Credit Check">
+  <zeebe:taskDefinition type="credit-check" retries="3"/>
+</bpmn:serviceTask>
 
-  <bpmn:exclusiveGateway id="Gateway_Decision" name="Credit decision?">
-    <bpmn:outgoing>Flow_Approved</bpmn:outgoing>
-    <bpmn:outgoing>Flow_Rejected</bpmn:outgoing>
-    <bpmn:outgoing>Flow_Manual_Review</bpmn:outgoing>
-  </bpmn:exclusiveGateway>
+<bpmn:exclusiveGateway id="Gateway_Decision">
+  <bpmn:outgoing>Flow_Approved</bpmn:outgoing>
+  <bpmn:outgoing>Flow_Manual_Review</bpmn:outgoing>
+  <bpmn:outgoing>Flow_Rejected</bpmn:outgoing>
+</bpmn:exclusiveGateway>
 
-  <bpmn:userTask id="manual_underwriting" name="Manual Underwriting"/>
-
-  <bpmn:boundaryEvent id="Event_Timeout" name="7 day timeout">
-    <bpmn:timerEventDefinition>
-      <bpmn:timeDuration>P7D</bpmn:timeDuration>
-    </bpmn:timerEventDefinition>
-  </bpmn:boundaryEvent>
-</bpmn:process>
+<bpmn:userTask id="manual_underwriting" name="Manual Underwriting"/>
 ```
 
-#### Worker Implementation
+**Worker Implementation**:
 ```kotlin
 @Component
-class CreditCheckWorker(private val loanService: LoanService) {
-
-    @JobWorker(type = "credit-check", timeout = 60000L, maxJobsActive = 10)
+class CreditCheckWorker {
+    @JobWorker(type = "credit-check", timeout = 60000L)
     fun performCreditCheck(
-        @Variable loanApplicationId: Long,
-        @Variable applicantId: String
+        @Variable loanApplicationId: Long
     ): Map<String, Any> {
-        val creditScore = simulateCreditScore(applicantId)
-        val decision = when {
-            creditScore >= 750 -> CreditDecision.Approved
-            creditScore >= 600 && creditScore < 680 -> CreditDecision.ManualReview
-            else -> CreditDecision.Rejected
-        }
-
+        val score = simulateCreditScore()
         return mapOf(
-            "creditDecision" to decision.value,
-            "creditScore" to creditScore
+            "creditScore" to score,
+            "creditDecision" to determineDecision(score)
         )
     }
 }
 ```
 
-#### Key Features
-- **Visual BPMN Designer**: Camunda Modeler for process design
-- **Operate UI**: Real-time monitoring and incident management
-- **Version Coexistence**: Multiple process versions running simultaneously
-- **User Tasks**: Built-in support for manual interventions
-- **Timers**: Native BPMN timer events for timeouts
+### Temporal: Pure Code
 
-### Temporal Implementation
-
-#### Workflow Implementation
+**Workflow Implementation**:
 ```kotlin
 class LoanApplicationWorkflowImpl : LoanApplicationWorkflow {
 
-    override fun processApplication(application: LoanApplication): LoanResult {
-        var creditScore = 0
-        var manualReviewAttempts = 0
+    private val creditCheckActivity = Workflow.newActivityStub(
+        CreditCheckActivity::class.java,
+        ActivityOptions.newBuilder()
+            .setStartToCloseTimeout(Duration.ofMinutes(1))
+            .setRetryOptions(RetryOptions.newBuilder()
+                .setMaximumAttempts(3)
+                .build())
+            .build()
+    )
 
-        while (manualReviewAttempts < maxManualReviewAttempts) {
-            // Credit check with automatic retries
-            val creditResult = creditCheckActivity.checkCredit(application)
-            creditScore = creditResult.score
+    override fun processApplication(app: LoanApplication): LoanResult {
+        var attempts = 0
 
-            // Make decision
-            val decision = decisionActivity.makeDecision(application, creditScore)
+        while (attempts < MAX_MANUAL_REVIEWS) {
+            // Credit check with auto-retry
+            val creditResult = creditCheckActivity.checkCredit(app)
 
-            when (decision) {
+            when (val decision = makeDecision(creditResult.score)) {
                 Decision.APPROVED -> {
-                    val contract = contractGenerationActivity.generateContract(application)
-                    return LoanResult(/* ... */, contractId = contract.contractId)
+                    val contract = contractActivity.generate(app)
+                    return LoanResult.approved(contract)
                 }
-
                 Decision.REJECTED -> {
-                    return LoanResult(/* rejected */)
+                    return LoanResult.rejected()
                 }
-
                 Decision.MANUAL_REVIEW -> {
-                    manualReviewAttempts++
-
-                    // Wait for signal with 7-day timeout
+                    attempts++
                     try {
-                        Workflow.await(Duration.ofDays(7)) { /* signal */ }
+                        // Wait for signal or 7-day timeout
+                        Workflow.await(Duration.ofDays(7)) {
+                            approvalReceived
+                        }
                         continue // Loop back to credit check
-                    } catch (e: Exception) {
-                        return LoanResult(/* timeout rejected */)
+                    } catch (e: TimeoutException) {
+                        return LoanResult.rejectedByTimeout()
                     }
                 }
             }
@@ -270,337 +213,290 @@ class LoanApplicationWorkflowImpl : LoanApplicationWorkflow {
 }
 ```
 
-#### Activity Implementation
-```kotlin
-class CreditCheckActivityImpl : CreditCheckActivity {
-
-    override fun checkCredit(application: LoanApplication): CreditCheckResult {
-        // Simulate credit check with 30% failure rate for retry demo
-        if (Random.nextDouble() < 0.3) {
-            throw RuntimeException("Credit service unavailable")
-        }
-
-        val creditScore = calculateCreditScore(application)
-        return CreditCheckResult(score = creditScore, reportId = UUID.randomUUID())
-    }
-}
-```
-
-#### Key Features
-- **Code-Based Workflows**: Type-safe, refactorable workflow definitions
-- **Event Sourcing**: Complete workflow history preserved
-- **Versioning**: Workflow.getVersion() for in-flight migrations
-- **Signals**: External communication mechanism for manual reviews
-- **Timers**: Workflow.await() with timeout for time-based logic
-
 ---
 
-## Pros and Cons
+## Pros & Cons Summary
 
-### Camunda 8 (Zeebe)
+### Camunda 8 ✅❌
 
-#### Pros ✅
-1. **Visual Process Design**
-   - BPMN 2.0 standard provides universal business-technical communication
-   - Non-developers can understand and validate workflows
-   - Camunda Modeler offers drag-and-drop process design
+**Pros:**
+- ✅ **Visual BPMN diagrams** - Universal business-technical communication
+- ✅ **Rich UI ecosystem** - Operate (monitoring), Tasklist (user tasks), Optimize (analytics)
+- ✅ **Business analyst friendly** - Non-developers can design and validate workflows
+- ✅ **Built-in user tasks** - Forms, assignments, routing out-of-the-box
+- ✅ **Industry standard** - BPMN 2.0 compliance and portability
+- ✅ **Enterprise features** - Multi-tenancy, extensive audit, compliance reporting
 
-2. **Rich Ecosystem**
-   - Operate UI for real-time process monitoring
-   - Incident management and manual job retries
-   - Optimize for process analytics and reporting
-   - Tasklist for user task management
+**Cons:**
+- ❌ **XML overhead** - Verbose BPMN files, merge conflicts can be painful
+- ❌ **Infrastructure complexity** - Zeebe + Elasticsearch + Operate
+- ❌ **Learning curve** - Must learn BPMN standard and Zeebe specifics
+- ❌ **Complex logic can be awkward** - BPMN not ideal for algorithmic workflows
+- ❌ **Debugging** - Different from standard IDE debugging
 
-3. **Enterprise Features**
-   - User tasks with forms and assignments
-   - Timer events, message events, error handling
-   - Process instance migration tools
-   - Multi-tenancy support
+### Temporal ✅❌
 
-4. **Standards-Based**
-   - BPMN 2.0 industry standard
-   - Portable process definitions
-   - Extensive documentation and community
+**Pros:**
+- ✅ **Code-first** - Workflows are just code (Kotlin, Java, Go, Python, TypeScript)
+- ✅ **Type safety** - Compile-time checks, IDE refactoring, autocomplete
+- ✅ **Developer experience** - Standard debugging, testing, version control
+- ✅ **Flexible logic** - Loops, conditionals, complex algorithms are natural
+- ✅ **Event sourcing** - Perfect audit trail with time-travel debugging
+- ✅ **Powerful versioning** - `Workflow.getVersion()` for in-flight evolution
 
-5. **Separation of Concerns**
-   - Process logic separate from business logic
-   - Workers can be written in any language (polyglot)
-   - Easy to involve business analysts in process design
-
-6. **Built-in Audit**
-   - Complete process history in Operate
-   - Out-of-the-box compliance reporting
-
-#### Cons ❌
-1. **XML Overhead**
-   - BPMN files can be verbose
-   - Requires separate tooling (Camunda Modeler)
-   - Merge conflicts in XML can be challenging
-
-2. **Infrastructure Complexity**
-   - Requires Zeebe broker, Elasticsearch, Operate
-   - More moving parts to manage in production
-   - Higher resource footprint
-
-3. **Learning Curve**
-   - BPMN 2.0 specification learning required
-   - Understanding Zeebe-specific extensions
-   - Different debugging approach (Operate UI vs IDE)
-
-4. **Coupling to BPMN**
-   - Complex conditional logic can be awkward in BPMN
-   - Sometimes requires workarounds for non-standard patterns
-
-5. **Versioning Complexity**
-   - Process version management requires careful planning
-   - In-flight instance migration can be complex
-
-### Temporal
-
-#### Pros ✅
-1. **Code-First Approach**
-   - Workflows are just code (Kotlin, Java, Go, Python, etc.)
-   - Use familiar IDE, debugging, and testing tools
-   - Type safety and compile-time checks
-   - Easy refactoring with IDE support
-
-2. **Developer Experience**
-   - No XML or external process definitions
-   - Local development without external dependencies
-   - Standard unit testing frameworks
-   - Rich language features (loops, conditionals, error handling)
-
-3. **Powerful Versioning**
-   - Workflow.getVersion() for in-flight workflow evolution
-   - Gradual rollout of new versions
-   - No separate process migration tools needed
-
-4. **Event Sourcing**
-   - Complete deterministic workflow replay
-   - Perfect audit trail out of the box
-   - Time-travel debugging capabilities
-
-5. **Scalability**
-   - Highly scalable architecture
-   - Efficient handling of long-running workflows
-   - Activity retries with exponential backoff
-
-6. **Flexibility**
-   - Easy to implement complex business logic
-   - Dynamic workflow behavior
-   - Rich control flow (loops, recursion, etc.)
-
-#### Cons ❌
-1. **No Visual Designer**
-   - No graphical process modeling tool
-   - Harder for non-developers to understand workflows
-   - Business analysts cannot directly design processes
-
-2. **Less Accessible to Business**
-   - Requires programming knowledge to understand workflows
-   - No BPMN standard for documentation
-   - Harder to get business sign-off on process design
-
-3. **Limited UI Tooling**
-   - Temporal UI is more technical
-   - Less polished than Camunda Operate
-   - No built-in user task management UI
-
-4. **Learning Curve**
-   - Unique concepts (determinism, workflow replay)
-   - Must understand event sourcing model
-   - Different mental model than traditional orchestration
-
-5. **No Built-in User Tasks**
-   - Manual interventions require signal handling
-   - No out-of-the-box task assignment/routing
-   - Need custom UI for human tasks
-
-6. **Debugging Complexity**
-   - Deterministic constraints can be tricky
-   - Cannot use random values or current time directly
-   - Requires understanding of Temporal's execution model
+**Cons:**
+- ❌ **No visual designer** - No graphical process modeling
+- ❌ **Business accessibility** - Requires programming knowledge
+- ❌ **No built-in user tasks** - Must implement signals + custom UI
+- ❌ **Technical UI** - Less polished than Camunda Operate
+- ❌ **Determinism constraints** - Cannot use random values or `System.currentTimeMillis()` directly
+- ❌ **Learning curve** - Unique concepts (deterministic replay, workflow constraints)
 
 ---
 
 ## When to Use Which
 
-### Choose Camunda 8 When:
+### Choose Camunda 8 when:
 
-✅ **Business involvement is critical**
-- Non-technical stakeholders need to understand and validate processes
-- Process design is a collaborative activity with business analysts
-- Compliance and audit require visual process documentation
+✅ **Business process management is a core capability**
+- Non-technical stakeholders need to understand and approve workflows
+- Process design involves business analysts and compliance officers
+- Visual documentation is required for audits and regulations
 
-✅ **You need rich UI tooling**
-- Real-time process monitoring is essential
-- Manual incident resolution is required
-- User task management with forms and assignments
+✅ **Rich UI tooling is critical**
+- Need out-of-the-box monitoring, incident management, and analytics
+- User tasks with forms, assignments, and routing
+- Real-time process visualization for operations teams
 
-✅ **Standard BPMN processes**
+✅ **Standard BPMN workflows**
 - Workflows align well with BPMN patterns
-- Industry standard compliance is required
-- Process portability across platforms
+- Portability across BPMN-compliant platforms is valuable
+- Industry standard compliance matters
 
-✅ **Enterprise features matter**
-- Multi-tenancy requirements
-- Complex organizational structures
-- Extensive reporting and analytics needs
-
-✅ **Example Use Cases:**
+**Example use cases:**
 - Loan origination (this POC!)
 - Insurance claims processing
-- Order fulfillment
-- Employee onboarding
 - Regulatory compliance workflows
+- Employee onboarding
+- Order fulfillment with manual approvals
 
-### Choose Temporal When:
+---
+
+### Choose Temporal when:
 
 ✅ **Developer-centric organization**
 - Engineering team owns workflow logic
-- Code reviews are preferred over visual reviews
-- Strong development practices (CI/CD, testing)
+- Code reviews and CI/CD are preferred
+- Strong testing culture
 
-✅ **Complex business logic**
-- Dynamic, data-driven workflows
-- Heavy conditional logic and loops
-- Need for algorithmic decision-making
+✅ **Complex, dynamic business logic**
+- Algorithmic decision-making
+- Data-driven workflows with heavy conditionals
+- Need for loops, recursion, complex state management
 
 ✅ **Microservices orchestration**
-- Service-to-service coordination
-- Saga pattern implementation
+- Service-to-service coordination (saga pattern)
 - Distributed transactions
+- Long-running background jobs
 
-✅ **Long-running workflows**
-- Workflows spanning months or years
-- Need perfect audit trail
-- Time-travel debugging requirements
-
-✅ **Rapid iteration needed**
+✅ **Rapid iteration required**
 - Fast-changing business requirements
-- Need quick deployments
-- Preference for code over configuration
+- Need quick deployments without BPMN modeling
+- Preference for code over visual configuration
 
-✅ **Example Use Cases:**
+**Example use cases:**
 - E-commerce order processing
-- Payment processing workflows
+- Payment processing pipelines
 - Data pipeline orchestration
+- Distributed saga coordination
 - Background job scheduling
-- Distributed saga orchestration
-
-### Hybrid Scenarios
-
-Consider a hybrid approach when:
-- Different teams have different preferences (business-critical flows in Camunda, technical flows in Temporal)
-- Migration strategy from one platform to another
-- Using both for different domains within the same organization
 
 ---
 
-## Key Differences
+## Using Both Together: Hybrid Approach
 
-### 1. Process Definition
+**Many fintech companies use BOTH Camunda and Temporal in the same application.** This hybrid approach leverages the strengths of each platform:
 
-| Aspect | Camunda 8 | Temporal |
-|--------|-----------|----------|
-| **Format** | BPMN 2.0 XML | Code (Kotlin, Java, Go, etc.) |
-| **Tooling** | Camunda Modeler | IDE (IntelliJ, VSCode) |
-| **Visualization** | Built-in diagram | Must be generated separately |
-| **Version Control** | XML diffs | Standard code diffs |
-| **Refactoring** | Manual XML editing | IDE refactoring tools |
+### Why Combine Them?
 
-### 2. Execution Model
+| Workflow Type | Best Tool | Reason |
+|---------------|-----------|--------|
+| **Customer-facing processes** | Camunda | Visual documentation for compliance, business stakeholder involvement |
+| **Backend orchestration** | Temporal | Complex logic, microservice coordination, developer-owned |
+| **Approval workflows** | Camunda | Built-in user tasks, forms, and tasklist UI |
+| **Payment processing** | Temporal | Deterministic execution, perfect audit trail, retry logic |
+| **Loan origination** | Camunda | Visual BPMN for regulatory compliance |
+| **Settlement workflows** | Temporal | Complex calculations, event sourcing, time-travel debugging |
 
-| Aspect | Camunda 8 | Temporal |
-|--------|-----------|----------|
-| **State Management** | Zeebe broker | Event history |
-| **Replay** | Not applicable | Deterministic replay |
-| **Debugging** | Operate UI | Standard debugging + replay |
-| **Failure Handling** | Incidents in Operate | Activity retries |
+### Real-World Hybrid Architecture
 
-### 3. Manual Reviews / User Tasks
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Fintech Application                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                               │
+│  Customer Journey (Camunda)                                  │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ • Account opening (BPMN with KYC approvals)         │    │
+│  │ • Loan application (manual underwriting steps)      │    │
+│  │ • Dispute resolution (customer service tasks)       │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                           │                                  │
+│                           ▼                                  │
+│                   [REST API / Events]                        │
+│                           │                                  │
+│                           ▼                                  │
+│  Backend Processes (Temporal)                                │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ • Payment processing (retry + idempotency)          │    │
+│  │ • Transaction settlement (complex calculations)     │    │
+│  │ • Fraud detection pipeline (ML model orchestration) │    │
+│  │ • Account reconciliation (scheduled jobs)           │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                               │
+└─────────────────────────────────────────────────────────────┘
+```
 
-| Aspect | Camunda 8 | Temporal |
-|--------|-----------|----------|
-| **Implementation** | BPMN User Task | Signal handling |
-| **UI** | Built-in Tasklist | Custom implementation |
-| **Assignment** | Native support | Custom logic |
-| **Forms** | Camunda Forms | Custom UI |
+### Example: Loan Workflow Hybrid
 
-### 4. Timeouts
+**Camunda handles**:
+- Initial application submission
+- Credit check approval decision
+- Manual underwriting (user tasks with forms)
+- Final contract generation and signing
+- Compliance audit trail with BPMN visualization
 
-| Aspect | Camunda 8 | Temporal |
-|--------|-----------|----------|
-| **Implementation** | BPMN Timer Boundary Event | `Workflow.await(Duration)` |
-| **Configuration** | XML: `<timeDuration>P7D</timeDuration>` | Code: `Duration.ofDays(7)` |
-| **Visibility** | Clear in BPMN diagram | Must read code |
+**Temporal handles** (triggered by Camunda):
+- Third-party credit bureau API calls (with sophisticated retry logic)
+- Payment disbursement to customer bank account
+- Automated payment collection (monthly, with exponential backoff)
+- Default detection and collection workflows
+- Settlement reconciliation
 
-### 5. Retries
+### Communication Patterns
 
-| Aspect | Camunda 8 | Temporal |
-|--------|-----------|----------|
-| **Configuration** | `@JobWorker(retries="3")` | `RetryOptions.setMaximumAttempts(3)` |
-| **Backoff** | Job metadata | `RetryOptions.setBackoffCoefficient()` |
-| **Manual Retry** | Operate UI button | Re-execute workflow |
+**Camunda → Temporal**:
+```kotlin
+// In Camunda worker, start a Temporal workflow
+@JobWorker(type = "initiate-payment")
+fun initiatePayment(@Variable loanId: Long) {
+    val temporalClient = WorkflowClient.newInstance(/*...*/)
+    val paymentWorkflow = temporalClient.newWorkflowStub(
+        PaymentWorkflow::class.java,
+        WorkflowOptions.newBuilder()
+            .setWorkflowId("payment-$loanId")
+            .build()
+    )
+    WorkflowClient.start { paymentWorkflow.processPayment(loanId) }
+}
+```
 
-### 6. Versioning
+**Temporal → Camunda** (via message correlation):
+```kotlin
+// In Temporal activity, signal Camunda process
+override fun notifyPaymentComplete(loanId: Long, status: PaymentStatus) {
+    zeebeClient.newPublishMessageCommand()
+        .messageName("payment-completed")
+        .correlationKey(loanId.toString())
+        .variables(mapOf("paymentStatus" to status))
+        .send()
+}
+```
 
-| Aspect | Camunda 8 | Temporal |
-|--------|-----------|----------|
-| **Strategy** | Multiple BPMN versions | `Workflow.getVersion()` |
-| **Migration** | Process instance migration | Automatic replay with version |
-| **Rollout** | Start new instances on new version | Code-based routing |
-| **In-flight** | Must migrate or complete old version | Continues on old code path |
+### Benefits of Hybrid Approach
 
-### 7. Monitoring
+✅ **Best of both worlds**:
+- Use Camunda where business visibility and user tasks matter
+- Use Temporal where complex logic and reliability are critical
 
-| Aspect | Camunda 8 | Temporal |
-|--------|-----------|----------|
-| **UI** | Camunda Operate (rich) | Temporal UI (technical) |
-| **Process View** | Visual BPMN diagram | Event history |
-| **Incidents** | Dedicated incident management | Workflow failures |
-| **Metrics** | Built-in dashboards | Prometheus/custom |
+✅ **Team specialization**:
+- Business analysts work on Camunda processes
+- Backend engineers own Temporal workflows
 
-### 8. Development Experience
+✅ **Scalability**:
+- Camunda for moderate volume, user-facing processes
+- Temporal for high-volume, automated backend flows
 
-| Aspect | Camunda 8 | Temporal |
-|--------|-----------|----------|
-| **Local Dev** | Docker Compose (Zeebe + deps) | Temporal server (lightweight) |
-| **Testing** | `zeebe-process-test-extension` | Standard unit tests |
-| **Debugging** | Logs + Operate UI | IDE debugger + replay |
-| **Hot Reload** | Deploy new BPMN | Standard code hot reload |
+✅ **Gradual adoption**:
+- Start with one platform
+- Add the other as needs evolve
+- No need to choose just one
+
+### Trade-offs
+
+❌ **Infrastructure complexity**: Running and maintaining both platforms
+❌ **Operational overhead**: Two monitoring UIs, two deployment processes
+❌ **Team expertise**: Developers need to learn both systems
+❌ **Integration complexity**: Ensuring reliable communication between platforms
 
 ---
 
-## Comparison Summary
+## Key Differences at a Glance
 
-### Quick Decision Matrix
+| Feature | Camunda 8 | Temporal |
+|---------|-----------|----------|
+| **Process definition** | BPMN 2.0 XML | Code (multiple languages) |
+| **Visual designer** | ✅ Camunda Modeler | ❌ No |
+| **State management** | Zeebe broker | Event history (event sourcing) |
+| **Manual tasks** | Built-in user tasks | Custom signals + UI |
+| **Timeouts** | BPMN timer events (`P7D`) | `Workflow.await(Duration.ofDays(7))` |
+| **Retries** | `@JobWorker(retries=3)` | `RetryOptions.setMaximumAttempts(3)` |
+| **Versioning** | Deploy new BPMN versions | `Workflow.getVersion()` in code |
+| **Monitoring UI** | Rich (Operate, Optimize) | Technical (Event History) |
+| **Debugging** | Operate UI + logs | IDE debugger + replay |
+| **Testing** | `zeebe-process-test` | Standard JUnit/TestNG |
+| **Learning curve** | BPMN standard | Determinism + event sourcing |
 
-| Criteria | Camunda 8 | Temporal |
-|----------|:---------:|:--------:|
-| **Visual process design** |   ⭐⭐⭐⭐⭐   | ⭐ |
-| **Business stakeholder accessibility** |   ⭐⭐⭐⭐⭐   | ⭐⭐ |
-| **Developer experience** |    ⭐⭐⭐    | ⭐⭐⭐⭐⭐ |
-| **Complex business logic** |    ⭐⭐⭐    | ⭐⭐⭐⭐⭐ |
-| **UI tooling** |   ⭐⭐⭐⭐⭐   | ⭐⭐⭐ |
-| **Learning curve** |    ⭐⭐     | ⭐⭐⭐ |
-| **Debugging** |   ⭐⭐⭐⭐    | ⭐⭐⭐⭐⭐ |
-| **Versioning flexibility** |    ⭐⭐⭐    | ⭐⭐⭐⭐⭐ |
-| **Audit trail** |   ⭐⭐⭐⭐⭐   | ⭐⭐⭐⭐⭐ |
-| **Infrastructure complexity** |    ⭐⭐⭐    | ⭐⭐⭐⭐ |
-| **Enterprise features** |   ⭐⭐⭐⭐⭐   | ⭐⭐⭐ |
-| **Rapid iteration** |    ⭐⭐⭐    | ⭐⭐⭐⭐⭐ |
+---
 
-### Final Recommendation
+## Getting Started
 
-**Choose Camunda 8** if:
-- Business process management is a core capability
-- Visual process documentation is required
-- Non-technical stakeholders are deeply involved
-- You need comprehensive UI tooling out-of-the-box
+### Quick Start - Camunda POC
 
-**Choose Temporal** if:
-- You're a developer-centric organization
-- Workflows contain complex, dynamic logic
-- You prefer code-based approaches
-- Rapid iteration and strong type safety matter
+```bash
+cd camunda-loan-poc
+docker-compose up -d
+./gradlew bootRun
+```
+
+Access Camunda Operate: **http://localhost:8081** (demo/demo)
+
+Submit a loan application:
+```bash
+curl -X POST http://localhost:8080/api/loan-applications \
+  -H "Content-Type: application/json" \
+  -d '{"applicantId": "CUST-001", "loanAmount": 50000, "applicantName": "John Doe"}'
+```
+
+### Quick Start - Temporal POC
+
+```bash
+cd temporal-loan-poc
+docker-compose up -d
+./gradlew run  # Start worker
+./gradlew runClient  # Execute workflow
+```
+
+Access Temporal UI: **http://localhost:8233**
+
+---
+
+## Learn More
+
+- **Camunda 8 Docs**: https://docs.camunda.io/
+- **Temporal Docs**: https://docs.temporal.io/
+- **BPMN 2.0 Spec**: https://www.omg.org/spec/BPMN/2.0/
+- **UI Screenshots**: [UI-SCREENSHOTS.md](UI-SCREENSHOTS.md)
+
+---
+
+## Conclusion
+
+Both Camunda and Temporal are powerful workflow orchestration platforms with different philosophies:
+
+- **Camunda** excels at business process management with visual BPMN, rich UI tooling, and stakeholder collaboration
+- **Temporal** shines for developer-centric, code-first workflows with complex logic and strong reliability guarantees
+
+**The best choice depends on your organization's culture, use case, and requirements.** Many successful companies use both in a hybrid architecture, applying each where it provides the most value.
+
+This POC demonstrates that the **same business workflow** can be implemented in both platforms, giving you hands-on experience to make an informed decision.
