@@ -1,0 +1,24 @@
+stateDiagram-v2
+    [*] --> Initiated
+
+    note right of Initiated: Application Start
+
+    Initiated --> KYC: verify identity
+    KYC --> BureauPull: pull credit
+    BureauPull --> IncomeVerification: check income
+    IncomeVerification --> RiskScoring: calculate score
+
+    RiskScoring --> Decision
+
+    Decision --> Approved: ≥ 750
+    Decision --> ManualReview: 600-749
+    Decision --> Rejected: < 600
+
+    ManualReview --> Approved: approved
+    ManualReview --> Rejected: rejected
+
+    Approved --> [*]
+    Rejected --> [*]
+
+    note left of Approved: Auto or Manual
+    note left of Rejected: Auto or Manual
