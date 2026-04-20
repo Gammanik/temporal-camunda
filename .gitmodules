@@ -4,3 +4,6 @@
 [submodule "temporal-loan-poc"]
 	path = temporal-loan-poc
 	url = https://github.com/Gammanik/temporal-poc.git
+[submodule "restate-loan-poc"]
+	path = restate-loan-poc
+	url = https://github.com/Gammanik/restate-poc.git

@@ -23,6 +23,7 @@ Both implementations handle the same business logic:
 
 - **[camunda-loan-poc/](./camunda-loan-poc/)** - BPMN-based workflow with Spring Boot, PostgreSQL, and Camunda 8
 - **[temporal-loan-poc/](./temporal-loan-poc/)** - Code-first workflow with Temporal's activity-based architecture
+- **[restate-loan-poc/](./restate-loan-poc/)** - Durable execution with Restate's event sourcing and RPC-style programming
 
 ---
 
@@ -67,22 +68,29 @@ Both implementations handle the same business logic:
        └────────┘
 ```
 
+**Detailed State Machine**: See [docs/credit-check-fsm.mmd](docs/credit-check-fsm.mmd) for the full finite state machine diagram including KYC, Bureau Pull, Income Verification, and Risk Scoring steps.
+
 ---
 
 ## Quick Comparison
 
-| Aspect | Camunda 8 | Temporal |
-|--------|-----------|----------|
-| **Process Definition** | BPMN 2.0 XML | Kotlin/Java code |
-| **Tooling** | Visual modeler | IDE (IntelliJ, VSCode) |
-| **Business Accessibility** | ⭐⭐⭐⭐⭐ Non-technical can understand | ⭐⭐ Requires programming knowledge |
-| **Developer Experience** | ⭐⭐⭐ XML + Code | ⭐⭐⭐⭐⭐ Pure code with type safety |
-| **UI Monitoring** | Rich (Operate, Tasklist, Optimize) | Technical (Event history) |
-| **Manual Tasks** | Built-in user tasks with forms | Signals + custom UI |
-| **Versioning** | BPMN version deployment | `Workflow.getVersion()` in code |
-| **Debugging** | Operate UI + logs | IDE debugger + deterministic replay |
-| **Learning Curve** | BPMN standard | Temporal concepts (determinism, replay) |
-| **Infrastructure** | Zeebe + Elasticsearch + Operate | Temporal server (lighter) |
+| Aspect | Camunda 8 | Temporal | Restate |
+|--------|-----------|----------|---------|
+| **Process Definition** | BPMN 2.0 XML | Kotlin/Java code | Kotlin/Java code |
+| **Tooling** | Visual modeler | IDE (IntelliJ, VSCode) | IDE (IntelliJ, VSCode) |
+| **Business Accessibility** | ⭐⭐⭐⭐⭐ Non-technical can understand | ⭐⭐ Requires programming knowledge | ⭐⭐ Requires programming knowledge |
+| **Developer Experience** | ⭐⭐⭐ XML + Code | ⭐⭐⭐⭐⭐ Pure code with type safety | ⭐⭐⭐⭐⭐ Pure code with coroutines |
+| **UI Monitoring** | Rich (Operate, Tasklist, Optimize) | Technical (Event history) | Admin API (JSON) |
+| **Manual Tasks** | Built-in user tasks with forms | Signals + custom UI | Durable promises + custom UI |
+| **Versioning** | BPMN version deployment | `Workflow.getVersion()` in code | Code versioning |
+| **Debugging** | Operate UI + logs | IDE debugger + deterministic replay | IDE debugger + event replay |
+| **Learning Curve** | BPMN standard | Temporal concepts (determinism, replay) | Event sourcing + async/await |
+| **Infrastructure** | Zeebe + Elasticsearch + Operate | Temporal server + PostgreSQL + workers | Single binary (restate-server) |
+| **Setup Time** | ~1 day (with license issues) | ~4 hours | ~1 hour |
+| **External Dependencies** | PostgreSQL, Elasticsearch, Zeebe | PostgreSQL, Temporal server cluster | None (embedded storage) |
+| **Licensing** | Enterprise (8.6+) for Zeebe in production | MIT (self-host) / Cloud (vendor) | BSL → OSS after 4 years |
+| **State Management** | Zeebe broker state | Event history (external DB) | Native event sourcing (embedded) |
+| **Operational Overhead** | High (multiple services) | Medium (cluster + DB) | Low (single process) |
 
 ---
 
@@ -228,11 +236,15 @@ class LoanApplicationWorkflowImpl : LoanApplicationWorkflow {
 - ✅ **Enterprise features** - Multi-tenancy, extensive audit, compliance reporting
 
 **Cons:**
+- ❌ **License change (8.6+, Oct 2024)** - Zeebe requires [Enterprise license for production use](https://camunda.com/blog/2024/10/camunda-8-6-launch/) (Community Edition removed)
+- ❌ **Spring integration issues** - [spring-zeebe-starter compatibility problems](https://github.com/camunda-community-hub/spring-zeebe/issues) require downgrading to 8.5.x for stable development
 - ❌ **XML overhead** - Verbose BPMN files, merge conflicts can be painful
 - ❌ **Infrastructure complexity** - Zeebe + Elasticsearch + Operate
 - ❌ **Learning curve** - Must learn BPMN standard and Zeebe specifics
 - ❌ **Complex logic can be awkward** - BPMN not ideal for algorithmic workflows
 - ❌ **Debugging** - Different from standard IDE debugging
+
+**Best fit:** Human-in-the-loop BPM, compliance-owned workflows with business stakeholder involvement. For pure machine-to-machine orchestration, this is overkill.
 
 ### Temporal ✅❌
 
@@ -245,12 +257,36 @@ class LoanApplicationWorkflowImpl : LoanApplicationWorkflow {
 - ✅ **Powerful versioning** - `Workflow.getVersion()` for in-flight evolution
 
 **Cons:**
+- ❌ **Deterministic replay requirement** - Any non-deterministic code (`LocalDateTime.now()`, `Random()`, external calls inside workflow) causes `NonDeterministicException` during replay. This is a significant mental shift for Java/Kotlin teams accustomed to standard programming.
+- ❌ **Infrastructure complexity** - Requires Temporal Server + PostgreSQL + worker processes for self-hosting, or Temporal Cloud (vendor lock + ongoing costs)
+- ❌ **Versioning complexity** - `getVersion()` patching becomes cumbersome with 10+ workflow versions; managing multiple in-flight version branches is error-prone
 - ❌ **No visual designer** - No graphical process modeling
 - ❌ **Business accessibility** - Requires programming knowledge
 - ❌ **No built-in user tasks** - Must implement signals + custom UI
 - ❌ **Technical UI** - Less polished than Camunda Operate
-- ❌ **Determinism constraints** - Cannot use random values or `System.currentTimeMillis()` directly
-- ❌ **Learning curve** - Unique concepts (deterministic replay, workflow constraints)
+
+### Restate ✅❌
+
+**Pros:**
+- ✅ **Single binary deployment** - Zero external dependencies (no separate database required)
+- ✅ **Minimal operational overhead** - One process vs. Temporal cluster or Camunda stack
+- ✅ **Code-first workflows** - Write durable workflows as regular async functions with `ctx.run()`
+- ✅ **Virtual Objects for stateful entities** - Maps naturally to domain objects like `LoanApplication`
+- ✅ **Durable promises** - First-class coordination primitive for manual approvals and timeouts
+- ✅ **Event sourcing built-in** - Complete audit trail without external event store
+- ✅ **No BPMN lock-in** - Pure code, no XML or visual modeling required
+- ✅ **HA clustering (v1.2+)** - Production-ready high availability since February 2025
+- ✅ **Strong engineering pedigree** - Team includes ex-Apache Flink committers (Stephan Ewen et al.), $7M seed funding
+
+**Cons:**
+- ❌ **Younger ecosystem** - Project launched 2023, less battle-tested than Temporal (2019) or Camunda (2008+)
+- ❌ **Smaller community** - Fewer Stack Overflow answers, community plugins, and third-party integrations
+- ❌ **BSL license** - Business Source License converts to Apache 2.0 after 4 years (not immediate OSS like MIT)
+- ❌ **Limited polyglot support** - Primarily Java/Kotlin, TypeScript; not as broad as Temporal's 5+ SDKs
+- ❌ **No visual designer** - No graphical process modeling (like Temporal)
+- ❌ **Maturity risk** - Fewer production deployments and edge case discoveries compared to incumbents
+
+**Best fit:** Machine-to-machine orchestration, microservices coordination, developer-owned workflows where operational simplicity and architectural elegance matter more than visual tooling or maximal ecosystem maturity.
 
 ---
 
@@ -313,139 +349,101 @@ class LoanApplicationWorkflowImpl : LoanApplicationWorkflow {
 
 ---
 
-## Using Both Together: Hybrid Approach
+### Choose Restate when:
 
-**Many fintech companies use BOTH Camunda and Temporal in the same application.** This hybrid approach leverages the strengths of each platform:
+✅ **Operational simplicity is paramount**
+- Small team that can't afford dedicated infrastructure engineers
+- Want to avoid managing separate database, queue, and workflow engine
+- Prefer single-binary deployment over distributed clusters
 
-### Why Combine Them?
+✅ **Developer-owned workflows with minimal ops**
+- Engineering team owns both application code and orchestration logic
+- Need durable execution without Temporal's infrastructure burden
+- Value architectural simplicity and fast iteration
 
-| Workflow Type | Best Tool | Reason |
-|---------------|-----------|--------|
-| **Customer-facing processes** | Camunda | Visual documentation for compliance, business stakeholder involvement |
-| **Backend orchestration** | Temporal | Complex logic, microservice coordination, developer-owned |
-| **Approval workflows** | Camunda | Built-in user tasks, forms, and tasklist UI |
-| **Payment processing** | Temporal | Deterministic execution, perfect audit trail, retry logic |
-| **Loan origination** | Camunda | Visual BPMN for regulatory compliance |
-| **Settlement workflows** | Temporal | Complex calculations, event sourcing, time-travel debugging |
+✅ **Stateful service orchestration**
+- Natural fit for entity-based workflows (orders, loans, accounts)
+- Virtual Objects map cleanly to domain models
+- Need direct RPC-style service invocation vs. activity stubs
 
-### Real-World Hybrid Architecture
+✅ **Startup or greenfield projects**
+- Can tolerate younger ecosystem in exchange for simpler architecture
+- Team comfortable with bleeding-edge tech (ex-Flink pedigree reduces risk)
+- Want to avoid licensing surprises (BSL is explicit)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Fintech Application                      │
-├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│  Customer Journey (Camunda)                                  │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │ • Account opening (BPMN with KYC approvals)         │    │
-│  │ • Loan application (manual underwriting steps)      │    │
-│  │ • Dispute resolution (customer service tasks)       │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                           │                                  │
-│                           ▼                                  │
-│                   [REST API / Events]                        │
-│                           │                                  │
-│                           ▼                                  │
-│  Backend Processes (Temporal)                                │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │ • Payment processing (retry + idempotency)          │    │
-│  │ • Transaction settlement (complex calculations)     │    │
-│  │ • Fraud detection pipeline (ML model orchestration) │    │
-│  │ • Account reconciliation (scheduled jobs)           │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                                                               │
-└─────────────────────────────────────────────────────────────┘
-```
+**Example use cases:**
+- Loan origination (this POC!)
+- Order processing and fulfillment
+- Account lifecycle management
+- Microservices saga orchestration
+- Scheduled job workflows with state
 
-### Example: Loan Workflow Hybrid
+---
 
-**Camunda handles**:
-- Initial application submission
-- Credit check approval decision
-- Manual underwriting (user tasks with forms)
-- Final contract generation and signing
-- Compliance audit trail with BPMN visualization
+## Using Both Together: Trade-offs
 
-**Temporal handles** (triggered by Camunda):
-- Third-party credit bureau API calls (with sophisticated retry logic)
-- Payment disbursement to customer bank account
-- Automated payment collection (monthly, with exponential backoff)
-- Default detection and collection workflows
-- Settlement reconciliation
+Some organizations run **both Camunda and Temporal** (or Restate) simultaneously:
 
-### Communication Patterns
+**Potential architecture:**
+- Camunda for customer-facing, compliance-heavy workflows (visual BPMN for audits)
+- Temporal/Restate for backend machine-to-machine orchestration (code-first reliability)
 
-**Camunda → Temporal**:
-```kotlin
-// In Camunda worker, start a Temporal workflow
-@JobWorker(type = "initiate-payment")
-fun initiatePayment(@Variable loanId: Long) {
-    val temporalClient = WorkflowClient.newInstance(/*...*/)
-    val paymentWorkflow = temporalClient.newWorkflowStub(
-        PaymentWorkflow::class.java,
-        WorkflowOptions.newBuilder()
-            .setWorkflowId("payment-$loanId")
-            .build()
-    )
-    WorkflowClient.start { paymentWorkflow.processPayment(loanId) }
-}
-```
+**Reality check:**
+- ❌ **Double infrastructure cost** - Run and maintain two separate orchestration platforms
+- ❌ **Double operational overhead** - Two monitoring systems, two deployment pipelines, two on-call rotations
+- ❌ **Team expertise dilution** - Developers must learn both systems, slows velocity
+- ❌ **Integration complexity** - Coordinating workflows across platforms adds failure modes
 
-**Temporal → Camunda** (via message correlation):
-```kotlin
-// In Temporal activity, signal Camunda process
-override fun notifyPaymentComplete(loanId: Long, status: PaymentStatus) {
-    zeebeClient.newPublishMessageCommand()
-        .messageName("payment-completed")
-        .correlationKey(loanId.toString())
-        .variables(mapOf("paymentStatus" to status))
-        .send()
-}
-```
+**Verdict for lending:** For most lending use cases (including this POC), running both is overkill. Pick one based on your organization's culture and constraints. If business stakeholders need BPMN, choose Camunda. If developer velocity and simplicity matter most, choose Restate. If you need battle-tested maturity, choose Temporal.
 
-### Benefits of Hybrid Approach
+---
 
-✅ **Best of both worlds**:
-- Use Camunda where business visibility and user tasks matter
-- Use Temporal where complex logic and reliability are critical
+## Recommendation
 
-✅ **Team specialization**:
-- Business analysts work on Camunda processes
-- Backend engineers own Temporal workflows
+**For the loan origination workflow in this POC, we recommend Restate.**
 
-✅ **Scalability**:
-- Camunda for moderate volume, user-facing processes
-- Temporal for high-volume, automated backend flows
+### Why Restate?
 
-✅ **Gradual adoption**:
-- Start with one platform
-- Add the other as needs evolve
-- No need to choose just one
+✅ **Minimal operational overhead** - Single binary vs. Temporal cluster (PostgreSQL + server + workers) or Camunda stack (Zeebe + Elasticsearch + Operate)
 
-### Trade-offs
+✅ **Code-first without BPMN lock-in** - Pure Kotlin/Java workflows, no XML ceremony, same developer experience as Temporal but simpler deployment
 
-❌ **Infrastructure complexity**: Running and maintaining both platforms
-❌ **Operational overhead**: Two monitoring UIs, two deployment processes
-❌ **Team expertise**: Developers need to learn both systems
-❌ **Integration complexity**: Ensuring reliable communication between platforms
+✅ **Native stateful entities** - Virtual Objects map naturally to `LoanApplication` state machine; cleaner than Temporal's activity stubs or Camunda's external state management
+
+✅ **No licensing landmines** - BSL is explicit and converts to OSS after 4 years; no surprise Enterprise requirements like Camunda 8.6+
+
+✅ **Architectural simplicity reduces risk** - Fewer moving parts = fewer failure modes, easier debugging, faster onboarding
+
+### Main Risk: Maturity
+
+❌ **Younger project** - Restate launched in 2023 vs. Temporal (2019) / Camunda (2008+). Smaller community, fewer production war stories.
+
+**Mitigation:** The team's pedigree (Apache Flink committers) and architectural simplicity itself reduce risk. A simpler system with strong fundamentals beats a complex mature system for most teams.
+
+### When NOT to Choose Restate
+
+- **Business stakeholders require BPMN** → Choose Camunda
+- **Need maximum ecosystem maturity** → Choose Temporal
+- **Require extensive polyglot SDKs** → Choose Temporal (Go, Python, PHP, .NET vs. Restate's Java/Kotlin/TypeScript)
 
 ---
 
 ## Key Differences at a Glance
 
-| Feature | Camunda 8 | Temporal |
-|---------|-----------|----------|
-| **Process definition** | BPMN 2.0 XML | Code (multiple languages) |
-| **Visual designer** | ✅ Camunda Modeler | ❌ No |
-| **State management** | Zeebe broker | Event history (event sourcing) |
-| **Manual tasks** | Built-in user tasks | Custom signals + UI |
-| **Timeouts** | BPMN timer events (`P7D`) | `Workflow.await(Duration.ofDays(7))` |
-| **Retries** | `@JobWorker(retries=3)` | `RetryOptions.setMaximumAttempts(3)` |
-| **Versioning** | Deploy new BPMN versions | `Workflow.getVersion()` in code |
-| **Monitoring UI** | Rich (Operate, Optimize) | Technical (Event History) |
-| **Debugging** | Operate UI + logs | IDE debugger + replay |
-| **Testing** | `zeebe-process-test` | Standard JUnit/TestNG |
-| **Learning curve** | BPMN standard | Determinism + event sourcing |
+| Feature | Camunda 8 | Temporal | Restate |
+|---------|-----------|----------|---------|
+| **Process definition** | BPMN 2.0 XML | Code (multiple languages) | Code (Kotlin/Java/TS) |
+| **Visual designer** | ✅ Camunda Modeler | ❌ No | ❌ No |
+| **State management** | Zeebe broker | Event history (event sourcing) | Event sourcing (embedded) |
+| **Manual tasks** | Built-in user tasks | Custom signals + UI | Durable promises + UI |
+| **Timeouts** | BPMN timer events (`P7D`) | `Workflow.await(Duration.ofDays(7))` | `ctx.promise().await()` |
+| **Retries** | `@JobWorker(retries=3)` | `RetryOptions.setMaximumAttempts(3)` | Automatic via `ctx.run()` |
+| **Versioning** | Deploy new BPMN versions | `Workflow.getVersion()` in code | Code versioning |
+| **Monitoring UI** | Rich (Operate, Optimize) | Technical (Event History) | Admin API (JSON) |
+| **Debugging** | Operate UI + logs | IDE debugger + replay | IDE debugger + event replay |
+| **Testing** | `zeebe-process-test` | Standard JUnit/TestNG | Standard JUnit/TestNG |
+| **Learning curve** | BPMN standard | Determinism + event sourcing | Event sourcing + async/await |
+| **Deployment** | Multi-service cluster | Server cluster + workers | Single binary |
 
 ---
 
@@ -479,24 +477,37 @@ docker-compose up -d
 
 Access Temporal UI: **http://localhost:8233**
 
+### Quick Start - Restate POC
+
+```bash
+cd restate-loan-poc
+docker-compose up -d
+./gradlew bootRun
+```
+
+Register services with Restate:
+```bash
+curl -X POST http://localhost:8080/deployments \
+  -H "Content-Type: application/json" \
+  -d '{"uri": "http://host.docker.internal:9080"}'
+```
+
+Submit a loan application:
+```bash
+curl -X POST http://localhost:9070/LoanApplicationWorkflow/${APPLICATION_ID}/run/processApplication \
+  -H "Content-Type: application/json" \
+  -d '{"applicationId": "APP-001", "applicantName": "Jane Smith", "amount": 50000, "income": 75000}'
+```
+
+Access Restate Admin API: **http://localhost:8080**
+
 ---
 
 ## Learn More
 
 - **Camunda 8 Docs**: https://docs.camunda.io/
 - **Temporal Docs**: https://docs.temporal.io/
+- **Restate Docs**: https://docs.restate.dev/
 - **BPMN 2.0 Spec**: https://www.omg.org/spec/BPMN/2.0/
 - **UI Screenshots**: [UI-SCREENSHOTS.md](UI-SCREENSHOTS.md)
 
----
-
-## Conclusion
-
-Both Camunda and Temporal are powerful workflow orchestration platforms with different philosophies:
-
-- **Camunda** excels at business process management with visual BPMN, rich UI tooling, and stakeholder collaboration
-- **Temporal** shines for developer-centric, code-first workflows with complex logic and strong reliability guarantees
-
-**The best choice depends on your organization's culture, use case, and requirements.** Many successful companies use both in a hybrid architecture, applying each where it provides the most value.
-
-This POC demonstrates that the **same business workflow** can be implemented in both platforms, giving you hands-on experience to make an informed decision.
