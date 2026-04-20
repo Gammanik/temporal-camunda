@@ -24,31 +24,30 @@ All three implementations handle identical business logic:
 
 | Aspect | Camunda 8 | Temporal | Restate |
 |--------|-----------|----------|---------|
-| **Process Definition** | BPMN 2.0 XML | Code (Go, Java, Python, TS, PHP) | Code (Java, Kotlin, TS) |
-| **Developer Experience** | XML + workers | Pure code, type-safe | Pure code, async/await |
+| **Process Definition** | BPMN 2.0 XML | Code | Code |
+| **Developer Experience** | XML + workers | Pure code, type-safe | Pure code |
 | **Infrastructure** | Zeebe + Elasticsearch + Operate | Server + PostgreSQL + workers | Single binary |
 | **Operational Overhead** | High | Medium | Low |
-| **Licensing** | Enterprise for production (8.6+, Oct 2024) | MIT (self-host) / Cloud | BSL → Apache 2.0 after 4 years |
-| **Key Challenge** | License cost ($50k–$330k/year) + integration issues | Deterministic replay footguns + versioning complexity | Younger ecosystem (2023) |
+| **Licensing** | Enterprise for production (8.6+) | MIT (self-host) / Cloud | BSL → Apache 2.0 after 4 years |
+| **Key Challenge** | License cost + integration issues | Deterministic replay + versioning | Younger ecosystem |
 | **Best For** | Business analyst–owned workflows | Battle-tested maturity | Operational simplicity |
 
 ### Key Findings
 
 **Camunda 8** — Not recommended for engineering-owned workflows.
-- Since v8.6 (Oct 2024), Zeebe requires Enterprise license for production ($50k–$330k/year estimate)
-- Hit license-related build issues in `spring-zeebe-starter` 8.6/8.7 during POC
+- Enterprise license required for production
 - BPMN overhead pays off when business analysts own workflows; unrealized value otherwise
 
 **Temporal** — Viable but operationally heavy.
-- Requires Temporal Server (Frontend + History + Matching + Worker services) + PostgreSQL
-- Deterministic replay contract is a persistent source of bugs (`LocalDateTime.now()`, `Math.random()` break on replay)
-- Versioning via `getVersion()` accumulates `if-else` noise after 10–15 revisions
+- Requires server cluster + PostgreSQL + worker processes
+- Deterministic replay contract is a persistent source of bugs
+- Versioning accumulates complexity after multiple revisions
 
 **Restate** — Recommended.
-- Single binary, no external database, no separate workers
-- Code-first Java SDK reads as regular functions with `ctx.run` at durability points
-- Virtual Objects provide native stateful entities (per-key serialization for rate-limiting, idempotency)
-- Built by ex-Apache Flink team; HA clustering since v1.2 (Feb 2025)
+- Single binary, no external dependencies
+- Code-first with `ctx.run` at durability points
+- Virtual Objects for stateful entities
+- Built by ex-Apache Flink team; HA clustering available
 - BSL license converts to Apache 2.0 after 4 years
 
 ---
@@ -62,15 +61,15 @@ Keep the workflow engine as an infrastructure concern behind a port:
 │                        Domain                           │
 │  ┌─────────────────────────────────────────────────┐   │
 │  │  LoanApplication (aggregate)                     │   │
-│  │  sealed ApplicationState + FSM guards            │   │
-│  │  Pure Java/Kotlin, zero framework dependencies   │   │
+│  │  ApplicationState + FSM guards                   │   │
+│  │  Zero framework dependencies                     │   │
 │  └─────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
                           ↕
 ┌─────────────────────────────────────────────────────────┐
 │                     Application                         │
 │  ┌─────────────────────────────────────────────────┐   │
-│  │  LoanApplicationService (transactional use-cases)│   │
+│  │  LoanApplicationService (use-cases)              │   │
 │  │                                                  │   │
 │  │  Ports:                                          │   │
 │  │   - LoanApplicationRepository                    │   │
@@ -82,81 +81,15 @@ Keep the workflow engine as an infrastructure concern behind a port:
 ┌─────────────────────────────────────────────────────────┐
 │                   Infrastructure                        │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ JPA adapter  │  │Restate adapter│  │ NATS adapter │  │
-│  │ (PostgreSQL) │  │ (orchestrator)│  │ (events)     │  │
+│  │ PostgreSQL   │  │Restate adapter│  │ NATS adapter │  │
+│  │ adapter      │  │ (orchestrator)│  │ (events)     │  │
 │  └──────────────┘  └──────────────┘  └──────────────┘  │
 └─────────────────────────────────────────────────────────┘
 ```
 
 **Key principles:**
-- **Source of truth** = PostgreSQL (application state)
-- **Restate** = Thin orchestrator calling back into LOS internal API
+- **Source of truth** = PostgreSQL
+- **Restate** = Thin orchestrator calling back into internal API
 - **FSM guards & invariants** = Domain layer, not Restate
-- **Reversible decision** = Swapping to Temporal = ~300 lines (workflow adapter + handler). Domain, persistence, REST API, tests untouched.
-
----
-
-## Getting Started
-
-### Quick Start - Camunda POC
-
-```bash
-cd camunda-loan-poc
-docker-compose up -d
-./gradlew bootRun
-```
-
-Access Camunda Operate: **http://localhost:8081** (demo/demo)
-
-Submit a loan application:
-```bash
-curl -X POST http://localhost:8080/api/loan-applications \
-  -H "Content-Type: application/json" \
-  -d '{"applicantId": "CUST-001", "loanAmount": 50000, "applicantName": "John Doe"}'
-```
-
-### Quick Start - Temporal POC
-
-```bash
-cd temporal-loan-poc
-docker-compose up -d
-./gradlew run  # Start worker
-./gradlew runClient  # Execute workflow
-```
-
-Access Temporal UI: **http://localhost:8233**
-
-### Quick Start - Restate POC
-
-```bash
-cd restate-loan-poc
-docker-compose up -d
-./gradlew bootRun
-```
-
-Register services with Restate:
-```bash
-curl -X POST http://localhost:8080/deployments \
-  -H "Content-Type: application/json" \
-  -d '{"uri": "http://host.docker.internal:9080"}'
-```
-
-Submit a loan application:
-```bash
-curl -X POST http://localhost:9070/LoanApplicationWorkflow/${APPLICATION_ID}/run/processApplication \
-  -H "Content-Type: application/json" \
-  -d '{"applicationId": "APP-001", "applicantName": "Jane Smith", "amount": 50000, "income": 75000}'
-```
-
-Access Restate Admin API: **http://localhost:8080**
-
----
-
-## Learn More
-
-- **Camunda 8 Docs**: https://docs.camunda.io/
-- **Temporal Docs**: https://docs.temporal.io/
-- **Restate Docs**: https://docs.restate.dev/
-- **BPMN 2.0 Spec**: https://www.omg.org/spec/BPMN/2.0/
-- **UI Screenshots**: [UI-SCREENSHOTS.md](UI-SCREENSHOTS.md)
+- **Reversible decision** = Swapping engines affects only workflow adapter. Domain, persistence, REST API, tests untouched.
 
